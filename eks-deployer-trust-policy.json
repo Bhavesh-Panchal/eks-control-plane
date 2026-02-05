@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEC2AssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    },
+    {
+      "Sid": "AllowIAMUserAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::ACCOUNT_ID:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "eks-deployer-external-id"
+        }
+      }
+    }
+  ]
+}

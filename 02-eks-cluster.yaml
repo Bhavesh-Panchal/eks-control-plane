@@ -1,0 +1,390 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EKS Cluster with Non-Node Dependent Add-ons - Stack 2 of 4'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: my-eks-cluster
+    Description: Name of the EKS cluster
+
+  Environment:
+    Type: String
+    Default: production
+    Description: Environment name
+
+Resources:
+  #============================================
+  # Lambda Role for Version Lookup
+  #============================================
+  VersionLookupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-version-lookup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EksDescribeVersions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeAddonVersions
+                Resource: '*'
+
+  #============================================
+  # Lambda Function to Get Latest Versions
+  #============================================
+  VersionLookupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ClusterName}-version-lookup'
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt VersionLookupRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import re
+
+          def parse_version(version_str):
+              """Parse version string to comparable tuple for sorting."""
+              # Extract version numbers from strings like "v1.19.0-eksbuild.1"
+              match = re.search(r'v?(\d+)\.(\d+)\.(\d+)', version_str)
+              if match:
+                  major, minor, patch = match.groups()
+                  # Also extract eksbuild number if present
+                  eksbuild_match = re.search(r'eksbuild\.(\d+)', version_str)
+                  eksbuild = int(eksbuild_match.group(1)) if eksbuild_match else 0
+                  return (int(major), int(minor), int(patch), eksbuild)
+              return (0, 0, 0, 0)
+
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  eks = boto3.client('eks')
+
+                  # Get latest Kubernetes version by querying addon versions
+                  response = eks.describe_addon_versions(addonName='vpc-cni')
+
+                  # Get all supported K8s versions from the addon compatibility
+                  k8s_versions = set()
+                  for addon in response.get('addons', []):
+                      for version_info in addon.get('addonVersions', []):
+                          for compat in version_info.get('compatibilities', []):
+                              k8s_versions.add(compat.get('clusterVersion'))
+
+                  # Sort and get the latest version
+                  sorted_versions = sorted(k8s_versions, key=lambda v: [int(x) for x in v.split('.')], reverse=True)
+                  latest_k8s_version = sorted_versions[0] if sorted_versions else '1.31'
+                  print(f"Latest Kubernetes version: {latest_k8s_version}")
+
+                  # Get latest addon versions for the latest K8s version
+                  addon_names = ['vpc-cni', 'kube-proxy', 'coredns', 'eks-pod-identity-agent',
+                                'metrics-server', 'aws-ebs-csi-driver', 'aws-efs-csi-driver', 'eks-node-monitoring-agent']
+
+                  addon_versions = {}
+                  for addon_name in addon_names:
+                      try:
+                          addon_response = eks.describe_addon_versions(
+                              kubernetesVersion=latest_k8s_version,
+                              addonName=addon_name
+                          )
+
+                          for addon in addon_response.get('addons', []):
+                              versions = addon.get('addonVersions', [])
+                              if versions:
+                                  # Collect all compatible versions for this K8s version
+                                  compatible_versions = []
+                                  for v in versions:
+                                      addon_ver = v.get('addonVersion')
+                                      compatibilities = v.get('compatibilities', [])
+                                      for c in compatibilities:
+                                          if c.get('clusterVersion') == latest_k8s_version:
+                                              compatible_versions.append(addon_ver)
+                                              break
+
+                                  # Sort versions and pick the latest (highest version number)
+                                  if compatible_versions:
+                                      sorted_addon_versions = sorted(compatible_versions, key=parse_version, reverse=True)
+                                      addon_versions[addon_name] = sorted_addon_versions[0]
+                                      print(f"{addon_name}: {sorted_addon_versions[0]} (from {len(compatible_versions)} compatible versions)")
+
+                      except Exception as e:
+                          print(f"Error getting version for {addon_name}: {str(e)}")
+
+                  result = {
+                      'KubernetesVersion': latest_k8s_version,
+                      'VpcCniVersion': addon_versions.get('vpc-cni', ''),
+                      'KubeProxyVersion': addon_versions.get('kube-proxy', ''),
+                      'CoreDnsVersion': addon_versions.get('coredns', ''),
+                      'PodIdentityVersion': addon_versions.get('eks-pod-identity-agent', ''),
+                      'MetricsServerVersion': addon_versions.get('metrics-server', ''),
+                      'EbsCsiVersion': addon_versions.get('aws-ebs-csi-driver', ''),
+                      'EfsCsiVersion': addon_versions.get('aws-efs-csi-driver', ''),
+                      'NodeMonitoringVersion': addon_versions.get('eks-node-monitoring-agent', '')
+                  }
+
+                  print(f"Final versions: {json.dumps(result, indent=2)}")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, result)
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  #============================================
+  # Custom Resource to Get Latest Versions
+  #============================================
+  LatestVersions:
+    Type: Custom::LatestVersions
+    Properties:
+      ServiceToken: !GetAtt VersionLookupFunction.Arn
+
+  #============================================
+  # KMS Key for Secrets Encryption
+  #============================================
+  EksSecretsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for EKS secrets encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-eks-secrets-key'
+
+  EksSecretsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ClusterName}-eks-secrets'
+      TargetKeyId: !Ref EksSecretsKey
+
+  #============================================
+  # EKS Cluster IAM Role
+  #============================================
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-cluster-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  #============================================
+  # EKS Cluster (Uses Latest K8s Version)
+  #============================================
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    DependsOn: LatestVersions
+    Properties:
+      Name: !Ref ClusterName
+      Version: !GetAtt LatestVersions.KubernetesVersion
+      RoleArn: !GetAtt EksClusterRole.Arn
+      AccessConfig:
+        AuthenticationMode: API
+      ResourcesVpcConfig:
+        SubnetIds: !Split
+          - ','
+          - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnets'
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+      EncryptionConfig:
+        - Provider:
+            KeyArn: !GetAtt EksSecretsKey.Arn
+          Resources:
+            - secrets
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+            - Type: controllerManager
+            - Type: scheduler
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================
+  # Pod Identity IAM Role for VPC CNI and EFS CSI
+  #============================================
+  VpcCniPodIdentityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-vpc-cni-pod-identity-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+
+  #============================================
+  # EKS Add-ons (Non-Node Dependent) - Latest Versions
+  # All addons deploy in PARALLEL for faster creation
+  # Using INLINE PodIdentityAssociations for speed
+  #============================================
+  PodIdentityAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: eks-pod-identity-agent
+      AddonVersion: !GetAtt LatestVersions.PodIdentityVersion
+      ResolveConflicts: NONE
+
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksCluster
+      - VpcCniPodIdentityRole
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: vpc-cni
+      AddonVersion: !GetAtt LatestVersions.VpcCniVersion
+      ResolveConflicts: NONE
+      # Inline Pod Identity Association - faster than separate resource
+      PodIdentityAssociations:
+        - RoleArn: !GetAtt VpcCniPodIdentityRole.Arn
+          ServiceAccount: aws-node
+
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: kube-proxy
+      AddonVersion: !GetAtt LatestVersions.KubeProxyVersion
+      ResolveConflicts: NONE
+
+  #============================================
+  # OIDC Provider for IRSA
+  #============================================
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
+
+Outputs:
+  ClusterName:
+    Description: EKS Cluster Name
+    Value: !Ref EksCluster
+    Export:
+      Name: !Sub '${ClusterName}-ClusterName'
+
+  ClusterArn:
+    Description: EKS Cluster ARN
+    Value: !GetAtt EksCluster.Arn
+    Export:
+      Name: !Sub '${ClusterName}-ClusterArn'
+
+  ClusterEndpoint:
+    Description: EKS Cluster Endpoint
+    Value: !GetAtt EksCluster.Endpoint
+    Export:
+      Name: !Sub '${ClusterName}-ClusterEndpoint'
+
+  ClusterSecurityGroupId:
+    Description: Cluster Security Group ID
+    Value: !GetAtt EksCluster.ClusterSecurityGroupId
+    Export:
+      Name: !Sub '${ClusterName}-ClusterSecurityGroupId'
+
+  OidcProviderArn:
+    Description: OIDC Provider ARN
+    Value: !GetAtt OidcProvider.Arn
+    Export:
+      Name: !Sub '${ClusterName}-OidcProviderArn'
+
+  OidcProviderUrl:
+    Description: OIDC Provider URL (without https://)
+    Value: !Select [1, !Split ['https://', !GetAtt EksCluster.OpenIdConnectIssuerUrl]]
+    Export:
+      Name: !Sub '${ClusterName}-OidcProviderUrl'
+
+  KubernetesVersion:
+    Description: Kubernetes Version Installed
+    Value: !GetAtt LatestVersions.KubernetesVersion
+    Export:
+      Name: !Sub '${ClusterName}-KubernetesVersion'
+
+  # Export addon versions for Stack 4
+  CoreDnsVersion:
+    Description: CoreDNS Addon Version
+    Value: !GetAtt LatestVersions.CoreDnsVersion
+    Export:
+      Name: !Sub '${ClusterName}-CoreDnsVersion'
+
+  MetricsServerVersion:
+    Description: Metrics Server Addon Version
+    Value: !GetAtt LatestVersions.MetricsServerVersion
+    Export:
+      Name: !Sub '${ClusterName}-MetricsServerVersion'
+
+  EbsCsiVersion:
+    Description: EBS CSI Driver Addon Version
+    Value: !GetAtt LatestVersions.EbsCsiVersion
+    Export:
+      Name: !Sub '${ClusterName}-EbsCsiVersion'
+
+  NodeMonitoringVersion:
+    Description: EKS Node Monitoring Agent Addon Version
+    Value: !GetAtt LatestVersions.NodeMonitoringVersion
+    Export:
+      Name: !Sub '${ClusterName}-NodeMonitoringVersion'
+
+  EfsCsiVersion:
+    Description: EFS CSI Driver Addon Version
+    Value: !GetAtt LatestVersions.EfsCsiVersion
+    Export:
+      Name: !Sub '${ClusterName}-EfsCsiVersion'
+
+  VpcCniPodIdentityRoleArn:
+    Description: VPC CNI Pod Identity Role ARN (also used for EFS CSI)
+    Value: !GetAtt VpcCniPodIdentityRole.Arn
+    Export:
+      Name: !Sub '${ClusterName}-VpcCniPodIdentityRoleArn'
+
+  KubectlCommand:
+    Description: Command to configure kubectl
+    Value: !Sub 'aws eks update-kubeconfig --region ${AWS::Region} --name ${ClusterName}'

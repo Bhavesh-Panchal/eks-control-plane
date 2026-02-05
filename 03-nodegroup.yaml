@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EKS Node Group - Stack 3 of 4'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: my-eks-cluster
+    Description: Name of the EKS cluster
+
+  Environment:
+    Type: String
+    Default: production
+    Description: Environment name
+
+  NodeGroupName:
+    Type: String
+    Default: primary-nodes
+    Description: Name of the node group
+
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - m5.large
+      - m5.xlarge
+    Description: EC2 instance type for nodes
+
+  DesiredCapacity:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 10
+    Description: Desired number of nodes
+
+  MinSize:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+    Description: Minimum number of nodes
+
+  MaxSize:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 20
+    Description: Maximum number of nodes
+
+  DiskSize:
+    Type: Number
+    Default: 80
+    MinValue: 20
+    MaxValue: 200
+    Description: Disk size in GB for nodes
+
+Resources:
+  #============================================
+  # Node Group IAM Role
+  #============================================
+  NodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-nodegroup-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  #============================================
+  # EKS Managed Node Group
+  #============================================
+  EksNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      NodegroupName: !Sub '${ClusterName}-${NodeGroupName}'
+      NodeRole: !GetAtt NodeGroupRole.Arn
+      Subnets: !Split
+        - ','
+        - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnets'
+      AmiType: AL2023_x86_64_STANDARD
+      CapacityType: ON_DEMAND
+      DiskSize: !Ref DiskSize
+      InstanceTypes:
+        - !Ref InstanceType
+      ScalingConfig:
+        DesiredSize: !Ref DesiredCapacity
+        MinSize: !Ref MinSize
+        MaxSize: !Ref MaxSize
+      UpdateConfig:
+        MaxUnavailable: 1
+      Labels:
+        role: worker
+        environment: !Ref Environment
+      Tags:
+        Name: !Sub '${ClusterName}-${NodeGroupName}'
+        Environment: !Ref Environment
+
+Outputs:
+  NodeGroupName:
+    Description: Node Group Name
+    Value: !Ref EksNodeGroup
+
+  NodeGroupArn:
+    Description: Node Group ARN
+    Value: !GetAtt EksNodeGroup.Arn
+
+  NodeRoleArn:
+    Description: Node IAM Role ARN
+    Value: !GetAtt NodeGroupRole.Arn

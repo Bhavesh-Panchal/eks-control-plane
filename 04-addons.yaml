@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EKS Node-Dependent Add-ons - Stack 4 of 4 (Latest Versions with Pod Identity)'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: my-eks-cluster
+    Description: Name of the EKS cluster
+
+Resources:
+  #============================================
+  # Pod Identity IAM Role for EBS CSI Driver
+  #============================================
+  EbsCsiPodIdentityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-ebs-csi-pod-identity-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+
+  #============================================
+  # EKS Add-ons (Node Dependent) - Latest Versions
+  #============================================
+
+  # CoreDNS - Provides DNS resolution for the cluster
+  CoreDnsAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      AddonName: coredns
+      AddonVersion:
+        Fn::ImportValue: !Sub '${ClusterName}-CoreDnsVersion'
+      ResolveConflicts: NONE
+
+  # Metrics Server - Provides resource metrics for HPA/VPA
+  # No DependsOn - deploy in parallel with CoreDNS
+  MetricsServerAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      AddonName: metrics-server
+      AddonVersion:
+        Fn::ImportValue: !Sub '${ClusterName}-MetricsServerVersion'
+      ResolveConflicts: NONE
+
+  # EBS CSI Driver - Enables EBS volume provisioning
+  # Using inline PodIdentityAssociations for faster deployment
+  EbsCsiAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EbsCsiPodIdentityRole
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      AddonName: aws-ebs-csi-driver
+      AddonVersion:
+        Fn::ImportValue: !Sub '${ClusterName}-EbsCsiVersion'
+      ResolveConflicts: NONE
+      ConfigurationValues: '{"defaultStorageClass":{"enabled":true}}'
+      # Inline Pod Identity Association - faster than separate resource
+      PodIdentityAssociations:
+        - RoleArn: !GetAtt EbsCsiPodIdentityRole.Arn
+          ServiceAccount: ebs-csi-controller-sa
+
+  # EKS Node Monitoring Agent - Monitors node health for auto-repair
+  # No DependsOn - deploy in parallel
+  NodeMonitoringAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      AddonName: eks-node-monitoring-agent
+      AddonVersion:
+        Fn::ImportValue: !Sub '${ClusterName}-NodeMonitoringVersion'
+      ResolveConflicts: NONE
+
+  # EFS CSI Driver - Enables EFS volume provisioning
+  # Uses shared Pod Identity Role from Stack 2 (VpcCniPodIdentityRole)
+  EfsCsiAddon:
+    Type: AWS::EKS::Addon
+    Properties:
+      ClusterName:
+        Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
+      AddonName: aws-efs-csi-driver
+      AddonVersion:
+        Fn::ImportValue: !Sub '${ClusterName}-EfsCsiVersion'
+      ResolveConflicts: NONE
+      # Inline Pod Identity Association using shared role from Stack 2
+      PodIdentityAssociations:
+        - RoleArn:
+            Fn::ImportValue: !Sub '${ClusterName}-VpcCniPodIdentityRoleArn'
+          ServiceAccount: efs-csi-controller-sa
+
+Outputs:
+  CoreDnsAddonName:
+    Description: CoreDNS Addon Name
+    Value: !Ref CoreDnsAddon
+
+  CoreDnsVersion:
+    Description: CoreDNS Version Installed
+    Value:
+      Fn::ImportValue: !Sub '${ClusterName}-CoreDnsVersion'
+
+  MetricsServerAddonName:
+    Description: Metrics Server Addon Name
+    Value: !Ref MetricsServerAddon
+
+  MetricsServerVersion:
+    Description: Metrics Server Version Installed
+    Value:
+      Fn::ImportValue: !Sub '${ClusterName}-MetricsServerVersion'
+
+  EbsCsiAddonName:
+    Description: EBS CSI Driver Addon Name
+    Value: !Ref EbsCsiAddon
+
+  EbsCsiVersion:
+    Description: EBS CSI Driver Version Installed
+    Value:
+      Fn::ImportValue: !Sub '${ClusterName}-EbsCsiVersion'
+
+  EbsCsiPodIdentityRoleArn:
+    Description: EBS CSI Driver Pod Identity Role ARN
+    Value: !GetAtt EbsCsiPodIdentityRole.Arn
+
+  NodeMonitoringAddonName:
+    Description: EKS Node Monitoring Agent Addon Name
+    Value: !Ref NodeMonitoringAddon
+
+  NodeMonitoringVersion:
+    Description: EKS Node Monitoring Agent Version Installed
+    Value:
+      Fn::ImportValue: !Sub '${ClusterName}-NodeMonitoringVersion'
+
+  EfsCsiAddonName:
+    Description: EFS CSI Driver Addon Name
+    Value: !Ref EfsCsiAddon
+
+  EfsCsiVersion:
+    Description: EFS CSI Driver Version Installed
+    Value:
+      Fn::ImportValue: !Sub '${ClusterName}-EfsCsiVersion'

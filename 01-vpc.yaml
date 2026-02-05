@@ -1,0 +1,377 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC for EKS Cluster - Stack 1 of 3'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: my-eks-cluster
+    Description: Name of the EKS cluster (used for tagging)
+
+  VpcCidr:
+    Type: String
+    Default: 10.11.0.0/16
+    Description: CIDR block for VPC
+
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - production
+      - staging
+      - development
+    Description: Environment name
+
+Resources:
+  #============================================
+  # VPC
+  #============================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-vpc'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  #============================================
+  # Internet Gateway
+  #============================================
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  #============================================
+  # Public Subnets (3 AZs)
+  #============================================
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-public-1'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-public-2'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 6, 12]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-public-3'
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  #============================================
+  # Private Subnets (3 AZs)
+  #============================================
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 6, 12]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-1'
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [4, !Cidr [!Ref VpcCidr, 6, 12]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-2'
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: !Select [5, !Cidr [!Ref VpcCidr, 6, 12]]
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-3'
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: shared
+
+  #============================================
+  # NAT Gateway (Single)
+  #============================================
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-nat-eip'
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      # Reduce drain time from default 350s to 30s for faster deletion
+      MaxDrainDurationSeconds: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-nat'
+
+  #============================================
+  # Public Route Table
+  #============================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  #============================================
+  # Private Route Tables (One per AZ)
+  #============================================
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-rt-1'
+
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-rt-2'
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-private-rt-3'
+
+  PrivateRoute3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable3
+
+  #============================================
+  # EFS Security Group
+  #============================================
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ClusterName}-efs-sg'
+      GroupDescription: Security group for EFS mount targets
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref VpcCidr
+          Description: Allow NFS traffic from VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-efs-sg'
+        - Key: Environment
+          Value: !Ref Environment
+
+  #============================================
+  # EFS File System - SIEM-NFS-1
+  #============================================
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      FileSystemTags:
+        - Key: Name
+          Value: SIEM-NFS-1
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: !Sub 'kubernetes.io/cluster/${ClusterName}'
+          Value: owned
+
+  #============================================
+  # EFS Mount Targets (One per Private Subnet)
+  #============================================
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet2
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsMountTarget3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet3
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${ClusterName}-VpcId'
+
+  PublicSubnets:
+    Description: Public Subnet IDs
+    Value: !Join [',', [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+    Export:
+      Name: !Sub '${ClusterName}-PublicSubnets'
+
+  PrivateSubnets:
+    Description: Private Subnet IDs
+    Value: !Join [',', [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+    Export:
+      Name: !Sub '${ClusterName}-PrivateSubnets'
+
+  VpcCidr:
+    Description: VPC CIDR
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${ClusterName}-VpcCidr'
+
+  EfsFileSystemId:
+    Description: EFS File System ID (SIEM-NFS-1)
+    Value: !Ref EfsFileSystem
+    Export:
+      Name: !Sub '${ClusterName}-EfsFileSystemId'
+
+  EfsSecurityGroupId:
+    Description: EFS Security Group ID
+    Value: !Ref EfsSecurityGroup
+    Export:
+      Name: !Sub '${ClusterName}-EfsSecurityGroupId'
