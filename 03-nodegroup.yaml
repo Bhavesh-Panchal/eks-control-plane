@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'EKS Node Group - Stack 3 of 4'
+Description: 'EKS Node Group - Stack 3 of 5'
 
 Parameters:
   ClusterName:
@@ -17,20 +17,26 @@ Parameters:
     Default: primary-nodes
     Description: Name of the node group
 
+  Architecture:
+    Type: String
+    Default: arm64
+    AllowedValues:
+      - arm64
+      - x86_64
+    Description: >-
+      CPU architecture for worker nodes. Choose arm64 for Graviton (c7g, m7g, t4g)
+      or x86_64 for Intel/AMD (t3, m5, c5, m6i, c6i).
+
   InstanceType:
     Type: String
-    Default: t3.large
-    AllowedValues:
-      - t3.medium
-      - t3.large
-      - t3.xlarge
-      - m5.large
-      - m5.xlarge
-    Description: EC2 instance type for nodes
+    Default: c7g.2xlarge
+    Description: >-
+      EC2 instance type for nodes. Must match the selected Architecture —
+      arm64: c7g.*, m7g.*, t4g.* | x86_64: t3.*, m5.*, c5.*, m6i.*, c6i.*
 
   DesiredCapacity:
     Type: Number
-    Default: 4
+    Default: 2
     MinValue: 1
     MaxValue: 10
     Description: Desired number of nodes
@@ -44,7 +50,7 @@ Parameters:
 
   MaxSize:
     Type: Number
-    Default: 4
+    Default: 3
     MinValue: 1
     MaxValue: 20
     Description: Maximum number of nodes
@@ -55,6 +61,50 @@ Parameters:
     MinValue: 20
     MaxValue: 200
     Description: Disk size in GB for nodes
+
+  NodeGroupAZMode:
+    Type: String
+    Default: multi
+    AllowedValues:
+      - single
+      - multi
+    Description: 'NodeGroup AZ distribution: single=1 AZ, multi=all AZs'
+
+  TargetAZ:
+    Type: String
+    Default: us-east-1a
+    Description: |
+      Target Availability Zone for single-AZ mode (e.g., us-east-1a, us-east-1b).
+      Must be a valid AZ in the selected region. Ignored in multi-AZ mode.
+
+Conditions:
+  IsArm64: !Equals [!Ref Architecture, 'arm64']
+  IsSingleAZ: !Equals [!Ref NodeGroupAZMode, 'single']
+  # Conditions to match TargetAZ with available subnets
+  UseSubnet1ForAZ: !Or [
+    !Equals [!Ref TargetAZ, 'us-east-1a'],
+    !Equals [!Ref TargetAZ, 'us-east-1d'],
+    !Equals [!Ref TargetAZ, 'us-west-2a'],
+    !Equals [!Ref TargetAZ, 'ap-south-1a'],
+    !Equals [!Ref TargetAZ, 'eu-west-1a'],
+    !Equals [!Ref TargetAZ, 'ap-southeast-1a']
+  ]
+  UseSubnet2ForAZ: !Or [
+    !Equals [!Ref TargetAZ, 'us-east-1b'],
+    !Equals [!Ref TargetAZ, 'us-east-1e'],
+    !Equals [!Ref TargetAZ, 'us-west-2b'],
+    !Equals [!Ref TargetAZ, 'ap-south-1b'],
+    !Equals [!Ref TargetAZ, 'eu-west-1b'],
+    !Equals [!Ref TargetAZ, 'ap-southeast-1b']
+  ]
+  UseSubnet3ForAZ: !Or [
+    !Equals [!Ref TargetAZ, 'us-east-1c'],
+    !Equals [!Ref TargetAZ, 'us-east-1f'],
+    !Equals [!Ref TargetAZ, 'us-west-2c'],
+    !Equals [!Ref TargetAZ, 'ap-south-1c'],
+    !Equals [!Ref TargetAZ, 'eu-west-1c'],
+    !Equals [!Ref TargetAZ, 'ap-southeast-1c']
+  ]
 
 Resources:
   #============================================
@@ -87,10 +137,21 @@ Resources:
         Fn::ImportValue: !Sub '${ClusterName}-ClusterName'
       NodegroupName: !Sub '${ClusterName}-${NodeGroupName}'
       NodeRole: !GetAtt NodeGroupRole.Arn
-      Subnets: !Split
-        - ','
-        - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnets'
-      AmiType: AL2023_x86_64_STANDARD
+      Subnets: !If
+        - IsSingleAZ
+        # Single AZ: Use only the subnet matching TargetAZ
+        - !If
+            - UseSubnet1ForAZ
+            - - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet1Id'
+            - !If
+                - UseSubnet2ForAZ
+                - - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet2Id'
+                - - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet3Id'
+        # Multi AZ: Use all 3 subnets
+        - - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet1Id'
+          - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet2Id'
+          - Fn::ImportValue: !Sub '${ClusterName}-PrivateSubnet3Id'
+      AmiType: !If [IsArm64, 'AL2023_ARM_64_STANDARD', 'AL2023_x86_64_STANDARD']
       CapacityType: ON_DEMAND
       DiskSize: !Ref DiskSize
       InstanceTypes:

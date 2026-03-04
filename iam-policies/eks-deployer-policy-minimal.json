@@ -1,0 +1,316 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationStackManagement",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:ListStacks",
+        "cloudformation:ListExports",
+        "cloudformation:ValidateTemplate",
+        "cloudformation:GetTemplate"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMRoleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PassRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRoles"
+      ],
+      "Resource": "arn:aws:iam::*:role/*-*"
+    },
+    {
+      "Sid": "IAMRolePolicyManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::*:role/*-*"
+    },
+    {
+      "Sid": "IAMManagedPolicyCreation",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:GetPolicy"
+      ],
+      "Resource": "arn:aws:iam::*:policy/*-*"
+    },
+    {
+      "Sid": "IAMOIDCProviderManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:GetOpenIDConnectProvider",
+        "iam:ListOpenIDConnectProviders",
+        "iam:TagOpenIDConnectProvider"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "STSIdentityAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "iam:SimulatePrincipalPolicy"
+      ],
+      "Resource": "*",
+      "Description": "Required to verify AWS identity and simulate policy for validation"
+    },
+    {
+      "Sid": "EKSClusterManagement",
+      "Effect": "Allow",
+      "Action": [
+        "eks:CreateCluster",
+        "eks:DeleteCluster",
+        "eks:DescribeCluster",
+        "eks:ListClusters",
+        "eks:UpdateClusterConfig",
+        "eks:TagResource"
+      ],
+      "Resource": "*",
+      "Description": "Required to create and manage EKS cluster"
+    },
+    {
+      "Sid": "EKSAddonManagement",
+      "Effect": "Allow",
+      "Action": [
+        "eks:CreateAddon",
+        "eks:DeleteAddon",
+        "eks:DescribeAddon",
+        "eks:UpdateAddon",
+        "eks:ListAddons",
+        "eks:DescribeAddonVersions"
+      ],
+      "Resource": "*",
+      "Description": "Required to install and manage EKS addons (VPC-CNI, CoreDNS, CSI drivers, etc.)"
+    },
+    {
+      "Sid": "EKSNodegroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "eks:CreateNodegroup",
+        "eks:DeleteNodegroup",
+        "eks:DescribeNodegroup",
+        "eks:ListNodegroups",
+        "eks:UpdateNodegroupConfig"
+      ],
+      "Resource": "*",
+      "Description": "Required to create and manage EKS managed node groups"
+    },
+    {
+      "Sid": "EKSPodIdentityManagement",
+      "Effect": "Allow",
+      "Action": [
+        "eks:CreatePodIdentityAssociation",
+        "eks:DeletePodIdentityAssociation"
+      ],
+      "Resource": "*",
+      "Description": "Required to associate pod identities with EKS addons"
+    },
+    {
+      "Sid": "EKSConfigAccess",
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribeCluster"
+      ],
+      "Resource": "*",
+      "Description": "Required for 'aws eks update-kubeconfig' command"
+    },
+    {
+      "Sid": "EC2VPCManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:DescribeVpcs",
+        "ec2:ModifyVpcAttribute",
+        "ec2:CreateTags",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*",
+      "Description": "Required to create and manage VPC"
+    },
+    {
+      "Sid": "EC2SubnetManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:DescribeSubnets"
+      ],
+      "Resource": "*",
+      "Description": "Required to create public and private subnets"
+    },
+    {
+      "Sid": "EC2InternetGatewayManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateInternetGateway",
+        "ec2:DeleteInternetGateway",
+        "ec2:DescribeInternetGateways",
+        "ec2:AttachInternetGateway",
+        "ec2:DetachInternetGateway"
+      ],
+      "Resource": "*",
+      "Description": "Required to create and attach Internet Gateway"
+    },
+    {
+      "Sid": "EC2NATGatewayManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNatGateway",
+        "ec2:DeleteNatGateway",
+        "ec2:DescribeNatGateways"
+      ],
+      "Resource": "*",
+      "Description": "Required to create NAT Gateway for private subnet egress"
+    },
+    {
+      "Sid": "EC2EIPManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AllocateAddress",
+        "ec2:ReleaseAddress",
+        "ec2:DescribeAddresses"
+      ],
+      "Resource": "*",
+      "Description": "Required to allocate Elastic IP for NAT Gateway"
+    },
+    {
+      "Sid": "EC2RouteTableManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:DescribeRouteTables",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable"
+      ],
+      "Resource": "*",
+      "Description": "Required to create route tables and routes for public/private subnets"
+    },
+    {
+      "Sid": "EC2SecurityGroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DescribeSecurityGroups",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "*",
+      "Description": "Required to create security groups for EFS and cluster"
+    },
+    {
+      "Sid": "EC2DescribeOperations",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeAccountAttributes",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeInstances",
+        "ec2:DescribeTags"
+      ],
+      "Resource": "*",
+      "Description": "Required for CloudFormation to query AZs and validate resources"
+    },
+    {
+      "Sid": "KMSKeyManagement",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey",
+        "kms:DescribeKey",
+        "kms:EnableKeyRotation",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:TagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:ListAliases"
+      ],
+      "Resource": "*",
+      "Description": "Required to create KMS key for EKS secrets encryption"
+    },
+    {
+      "Sid": "EFSManagement",
+      "Effect": "Allow",
+      "Action": [
+        "elasticfilesystem:CreateFileSystem",
+        "elasticfilesystem:DeleteFileSystem",
+        "elasticfilesystem:DescribeFileSystems",
+        "elasticfilesystem:CreateMountTarget",
+        "elasticfilesystem:DeleteMountTarget",
+        "elasticfilesystem:DescribeMountTargets",
+        "elasticfilesystem:TagResource"
+      ],
+      "Resource": "*",
+      "Description": "Required to create EFS file system and mount targets"
+    },
+    {
+      "Sid": "LambdaFunctionManagement",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetFunction",
+        "lambda:InvokeFunction",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:TagResource"
+      ],
+      "Resource": "arn:aws:lambda:*:*:function:*version-lookup*",
+      "Description": "Required to create Lambda function for dynamic version lookup"
+    },
+    {
+      "Sid": "CloudWatchLogsForLambda",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:DescribeLogGroups",
+        "logs:CreateLogStream",
+        "logs:DeleteLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/*version-lookup*",
+      "Description": "Required for Lambda function logging"
+    },
+    {
+      "Sid": "ELBDescribeOnly",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeTags"
+      ],
+      "Resource": "*",
+      "Description": "Required for validation - actual LB creation done by LB Controller via IRSA"
+   }
+  ]
+}

@@ -1,407 +1,536 @@
 # AWS EKS CloudFormation Deployment
 
-A production-ready, 4-stack CloudFormation deployment for Amazon EKS with optimized creation and deletion times.
+Production-ready CloudFormation templates and automation for deploying Amazon EKS clusters with AWS Load Balancer Controller integration.
 
-## Architecture Overview
+---
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         4-Stack Architecture                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Stack 1: VPC                    Stack 2: EKS Cluster               │
-│  ┌─────────────────────┐         ┌─────────────────────┐            │
-│  │ • VPC               │         │ • EKS Cluster       │            │
-│  │ • 3 Public Subnets  │──────── │ • VPC CNI Addon     │            │
-│  │ • 3 Private Subnets │         │ • Kube-Proxy Addon  │            │
-│  │ • 1 NAT Gateway     │         │ • Pod Identity Addon│            │
-│  │ • Route Tables      │         │ • OIDC Provider     │            │
-│  │ • Internet Gateway  │         │ • KMS Key           │            │
-│  └─────────────────────┘         └──────────┬──────────┘            │
-│                                             │                       │
-│                                             ▼                       │
-│  Stack 4: Addons                 Stack 3: Node Group                │
-│  ┌─────────────────────┐         ┌─────────────────────┐            │
-│  │ • CoreDNS           │◀───────│ • Managed Node Group│            │
-│  │ • Metrics Server    │         │ • IAM Role          │            │
-│  │ • EBS CSI Driver    │         │ • AL2023 AMI        │            │
-│  │ • Node Monitoring   │         │ • Auto Scaling      │            │
-│  └─────────────────────┘         └─────────────────────┘            │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+## Table of Contents
 
-## Prerequisites
+- [Quick Start](#quick-start)
+- [Pre-Deployment Validation](#pre-deployment-validation)
+- [Stack Architecture](#stack-architecture)
+- [IAM Requirements](#iam-requirements)
+- [Deployment Options](#deployment-options)
+- [Cleanup Features](#cleanup-features)
+- [Customization](#customization)
+- [Troubleshooting](#troubleshooting)
+- [Support](#support)
 
-- AWS CLI configured with appropriate credentials
-- kubectl installed
-- Bash shell (Linux/macOS/WSL)
-
-```bash
-# Verify AWS credentials
-aws sts get-caller-identity
-
-# Verify kubectl
-kubectl version --client
-```
+---
 
 ## Quick Start
 
-### 1. Deploy Everything
+### 1. Validate Permissions (Required First Step)
+
+Before deploying, verify your AWS credentials have the required IAM permissions:
 
 ```bash
-cd cloudformation
-chmod +x deploy.sh
+# Make validation script executable
+chmod +x validate-permissions.sh
+
+# Run validation
+./validate-permissions.sh
+```
+
+**Expected Output:**
+``╔══════════════════════════════════════════════════╗
+║                   ✔ ALL PERMISSIONS OK                     ║
+╚══════════════════════════════════════════════════╝
+
+Total Permissions Checked: 116
+Allowed: 116
+Denied/Missing: 0
+Pass Rate: 100%
+
+```
+
+If validation fails, see [IAM Requirements](#iam-requirements) below.
+
+### 2. Deploy EKS Cluster
+
+```bash
+# Deploy all stacks
 ./deploy.sh deploy all
 ```
 
-You'll be prompted for:
-- **Cluster Name**: Name for your EKS cluster (e.g., `prod-cluster`, `dev-eks`)
-- **AWS Region**: Select from common regions or enter custom
+The script will prompt for:
 
-### 2. Verify Deployment
+- **Cluster Name**: Your EKS cluster identifier
+- **AWS Region**: Target deployment region
+- **VPC CIDR**: VPC network range (default: 10.11.0.0/16)
+- **Node Architecture**: arm64 (Graviton) or x86_64
+- **Node Configuration**: Instance type, scaling, disk size
 
-```bash
-# Check nodes
-kubectl get nodes
-
-# Check all pods
-kubectl get pods -A
-
-# Check addons
-kubectl get daemonsets -n kube-system
-```
-
-### 3. Destroy Everything
+### 3. Destroy Cluster
 
 ```bash
 ./deploy.sh destroy all
 ```
 
-The script automatically detects deployed clusters and shows a selection list:
+**Destroy Process (4 Phases):**
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                    DESTROY CONFIGURATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- **Phase 0:** Helm Chart Cleanup (lists all Helm releases, prompts for uninstall)
+- **Phase 1:** Delete LB Controller + Addons + NodeGroup in parallel
+- **Phase 2:** Delete EKS Cluster
+- **Phase 3:** Delete VPC
+- **Phase 4:** Cleanup EBS Volumes (finds Kubernetes-created volumes, prompts for deletion)
 
-Searching for deployed EKS clusters...
+---
 
-  Found 2 deployed cluster(s):
+## Pre-Deployment Validation
 
-    #   Cluster Name                Region
-    ─────────────────────────────────────────────
-    1)  prod-cluster                ap-south-1
-    2)  dev-cluster                 us-east-1
+### Why Validate First?
 
-  Select cluster to destroy [1-2]: 1
-```
+The `deploy.sh` script creates and manages multiple AWS resources. If permissions are missing, the deployment will fail partway through, leaving resources in an inconsistent state.
 
-If no clusters are found:
+**Always run validation first** to ensure your IAM user/role has all required permissions.
 
-```
-Searching for deployed EKS clusters...
+### Validation Script Features
 
-  No deployed EKS clusters found.
+- ✅ Checks 116+ permissions across 8 AWS services
+- ✅ Uses AWS IAM `simulate-principal-policy` API
+- ✅ Works with AWS SSO and IAM roles
+- ✅ Fast (~15 seconds)
+- ✅ Clear pass/fail reporting with missing action list
 
-  Either:
-    - No clusters have been deployed yet
-    - Clusters were deployed in a different region
-    - You don't have permission to list stacks
-```
-
-## Detailed Usage
-
-### Available Commands
-
-| Command | Description |
-|---------|-------------|
-| `deploy all` | Deploy all 4 stacks with interactive prompts |
-| `deploy vpc` | Deploy VPC stack only |
-| `deploy eks` | Deploy EKS cluster + non-node addons |
-| `deploy nodegroup` | Deploy managed node group |
-| `deploy addons` | Deploy node-dependent addons |
-| `destroy all` | Fast parallel destroy all stacks |
-| `destroy [stack]` | Destroy specific stack |
-| `force-destroy` | Force delete stuck stacks |
-| `status` | Show status of all stacks |
-| `validate` | Validate all CloudFormation templates |
-| `Devtron` | Run Devtron pre-requisite setup |
-
-### Examples
+### Running Validation
 
 ```bash
-# Interactive deployment
+# Basic validation
+./validate-permissions.sh
+
+# Specify region
+AWS_REGION=us-west-2 ./validate-permissions.sh
+```
+
+## Stack Architecture
+
+### 5-Stack Deployment Model
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Stack 1: VPC (01-vpc.yaml)                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ EC2: VPC, 6 Subnets, IGW, NAT Gateway, EIP,              │   │
+│  │      4 Route Tables, Security Group                      │   │
+│  │ EFS: FileSystem, 3 Mount Targets                         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Stack 2: EKS Cluster (02-eks-cluster.yaml)                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ IAM: Cluster Role, OIDC Provider, Pod Identity Role      │   │
+│  │ KMS: Encryption Key                                     │   │
+│  │ Lambda: Version Lookup Function                         │   │
+│  │ EKS: Cluster, 3 Addons (vpc-cni, kube-proxy, pod-id)     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Stack 3: Node Group (03-nodegroup.yaml)                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ IAM: Node Group Role                                     │   │
+│  │ EKS: Managed Node Group                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Stack 4: Addons (04-addons.yaml)                            │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ IAM: EBS CSI Pod Identity Role                           │   │
+│  │ EKS: 5 Addons (coredns, metrics-server, ebs-csi,         │   │
+│  │              efs-csi, node-monitoring)                    │   │
+│  │ K8s: EFS StorageClass                                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  Stack 5: LB Controller (05-load-balancer-controller.yaml)      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ IAM: Managed Policy, IRSA Role                           │   │
+│  │ Helm: Install AWS Load Balancer Controller               │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Resource Summary
+
+| Stack | Resources Created |
+|--------|-------------------|
+| **1. VPC** | VPC, 6 subnets (3 public, 3 private), Internet Gateway, NAT Gateway, Elastic IP, 4 Route Tables, EFS FileSystem, 3 EFS Mount Targets, Security Group |
+| **2. EKS Cluster** | IAM roles (cluster, pod identity), KMS encryption key, Lambda function (version lookup), OIDC provider, EKS cluster, 3 EKS addons |
+| **3. Node Group** | IAM role, EKS managed node group with EC2 instances |
+| **4. Addons** | IAM role (EBS CSI pod identity), 5 EKS addons, EFS StorageClass |
+| **5. LB Controller** | IAM managed policy, IAM role (IRSA), Helm chart installation |
+
+---
+
+## IAM Requirements
+
+### Required Permissions
+
+The deployment requires permissions across 8 AWS services (116+ actions total):
+
+| Service | Key Permissions Required |
+|---------|--------------------------|
+| **CloudFormation** | CreateStack, UpdateStack, DeleteStack, DescribeStacks, etc. |
+| **IAM** | CreateRole, DeleteRole, PassRole, CreatePolicy, CreateOpenIDConnectProvider, etc. |
+| **EKS** | CreateCluster, CreateNodegroup, CreateAddon, etc. |
+| **EC2** | CreateVpc, CreateSubnet, CreateNatGateway, AllocateAddress, CreateRouteTable, CreateSecurityGroup, etc. |
+| **KMS** | CreateKey, PutKeyPolicy, etc. |
+| **EFS** | CreateFileSystem, CreateMountTarget, etc. |
+| **Lambda** | CreateFunction, InvokeFunction, etc. |
+| **CloudWatch Logs** | CreateLogGroup, PutLogEvents, etc. |
+
+### IAM Policy
+
+The minimum required policy is available at:
+
+```
+iam-policies/eks-deployer-policy-minimal.json
+```
+
+### Attaching the Policy
+
+**Option 1: Via AWS Console**
+
+1. Go to IAM → Users → Your user
+2. Click "Add permissions" → "Attach policies"
+3. Search for and select `eks-deployer-policy-minimal.json`
+
+**Option 2: Via AWS CLI**
+
+```bash
+# Create policy
+aws iam create-policy \
+  --policy-name EKS-Deployer-Minimal \
+  --policy-document file://iam-policies/eks-deployer-policy-minimal.json
+
+# Attach to your user
+aws iam attach-user-policy \
+  --user-name YOUR_USERNAME \
+  --policy-arn arn:aws:iam::ACCOUNT_ID:policy/EKS-Deployer-Minimal
+```
+
+### Permission Documentation
+
+See [PERMISSIONS.md](PERMISSIONS.md) for detailed permission breakdown and explanations.
+
+---
+
+## Deployment Options
+
+### Deploy All Stacks
+
+```bash
 ./deploy.sh deploy all
+```
 
-# Interactive destruction
-./deploy.sh destroy all
+### Deploy Specific Stacks
 
-# Check stack status
-./deploy.sh status
-
-# Validate templates before deployment
-./deploy.sh validate
-
-# Run Devtron pre-requisite setup
-./deploy.sh Devtron
-
-# Deploy individual stacks
+```bash
+# Deploy VPC only
 ./deploy.sh deploy vpc
+
+# Deploy VPC + EKS Cluster
 ./deploy.sh deploy eks
+
+# Deploy VPC + EKS + Node Group
 ./deploy.sh deploy nodegroup
+
+# Deploy through Addons
 ./deploy.sh deploy addons
 
-# Destroy individual stacks (reverse order)
+# Deploy everything (5 stacks)
+./deploy.sh deploy all
+```
+
+### Destroy Stacks
+
+```bash
+# Destroy Load Balancer Controller only
+./deploy.sh destroy lb-controller
+
+# Destroy Addons
 ./deploy.sh destroy addons
+
+# Destroy Node Group
 ./deploy.sh destroy nodegroup
+
+# Destroy EKS Cluster
 ./deploy.sh destroy eks
+
+# Destroy VPC (must be last)
 ./deploy.sh destroy vpc
 
-# Force delete stuck stacks
-./deploy.sh force-destroy
+# FAST: Parallel destroy (LB + Addons + NodeGroup together)
+./deploy.sh destroy all
 ```
 
-### Non-Interactive Mode (CI/CD)
-
-Skip prompts using environment variables:
-
-```bash
-# Deploy without prompts
-CLUSTER_NAME=prod-cluster AWS_REGION=us-west-2 ./deploy.sh deploy all
-
-# Destroy without prompts
-CLUSTER_NAME=prod-cluster AWS_REGION=us-west-2 ./deploy.sh destroy all
-```
-
-## Stack Details
-
-### Stack 1: VPC (`01-vpc.yaml`)
-
-| Resource | Description |
-|----------|-------------|
-| VPC | 10.11.0.0/16 CIDR block |
-| Public Subnets | 3 subnets across AZs |
-| Private Subnets | 3 subnets across AZs |
-| NAT Gateway | Single NAT for cost optimization |
-| Route Tables | 1 public + 3 private |
-| Internet Gateway | For public subnet access |
-
-### Stack 2: EKS Cluster (`02-eks-cluster.yaml`)
-
-| Resource | Description |
-|----------|-------------|
-| EKS Cluster | Latest Kubernetes version (auto-detected) |
-| VPC CNI | Latest version with Pod Identity |
-| Kube-Proxy | Latest version |
-| Pod Identity Agent | For IAM role association |
-| OIDC Provider | For IRSA support |
-| KMS Key | Secrets encryption |
-
-### Stack 3: Node Group (`03-nodegroup.yaml`)
-
-| Resource | Description |
-|----------|-------------|
-| Managed Node Group | AL2023 x86_64 AMI |
-| Instance Type | t3.large (configurable) |
-| Scaling | Min: 2, Desired: 4, Max: 4 |
-| Disk Size | 80 GB |
-
-### Stack 4: Addons (`04-addons.yaml`)
-
-| Addon | Description |
-|-------|-------------|
-| CoreDNS | Cluster DNS resolution |
-| Metrics Server | Resource metrics for HPA/VPA |
-| EBS CSI Driver | EBS volume provisioning (default StorageClass) |
-| Node Monitoring Agent | Node health monitoring |
-
-## Configuration
-
-### Default Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| ClusterName | my-eks-cluster | Name prefix for all resources |
-| AWS_REGION | us-east-1 | AWS region for deployment |
-| InstanceType | t3.large | EC2 instance type for nodes |
-| DesiredCapacity | 4 | Number of worker nodes |
-| DiskSize | 80 | Node disk size in GB |
-
-### Customizing Node Group
-
-Edit `03-nodegroup.yaml` parameters:
-
-```yaml
-Parameters:
-  InstanceType:
-    Type: String
-    Default: t3.large      # Change instance type
-  DesiredCapacity:
-    Type: Number
-    Default: 4             # Change node count
-  DiskSize:
-    Type: Number
-    Default: 80            # Change disk size
-```
-
-## Performance Optimizations
-
-### Fast Deployment
-
-- **Parallel Addon Creation**: Non-dependent addons deploy simultaneously
-- **Latest Versions**: Lambda function auto-detects latest K8s and addon versions
-- **Inline Pod Identity**: Associations embedded in addon resources
-- **ResolveConflicts: NONE**: Faster addon installation
-
-### Fast Deletion
-
-- **Parallel Stack Deletion**: Addons + NodeGroup delete simultaneously
-- **NAT Gateway Optimization**: `MaxDrainDurationSeconds: 30` (vs 350s default)
-- **Force Delete Mode**: Handles stuck `DELETE_FAILED` stacks
-
-### Estimated Times
-
-| Operation | Time |
-|-----------|------|
-| Full Deploy | ~25-30 minutes |
-| Full Destroy | ~10-12 minutes |
-| VPC Only | ~2 minutes |
-| EKS Cluster | ~15-20 minutes |
-| Node Group | ~5-10 minutes |
-| Addons | ~3-5 minutes |
-
-## IAM Roles & Permissions
-
-### Created IAM Roles
-
-| Role | Purpose |
-|------|---------|
-| `{cluster}-cluster-role` | EKS control plane |
-| `{cluster}-nodegroup-role` | EC2 worker nodes |
-| `{cluster}-vpc-cni-pod-identity-role` | VPC CNI Pod Identity |
-| `{cluster}-ebs-csi-pod-identity-role` | EBS CSI Pod Identity |
-| `{cluster}-version-lookup-role` | Lambda for version detection |
-
-### Node Group Policies
-
-- AmazonEKSWorkerNodePolicy
-- AmazonEKS_CNI_Policy
-- AmazonEC2ContainerRegistryReadOnly
-- AmazonSSMManagedInstanceCore
-
-## Troubleshooting
-
-### Stack Stuck in DELETE_FAILED
-
-```bash
-# Use force delete
-./deploy.sh force-destroy
-```
-
-### Check Stack Events
-
-```bash
-# View CloudFormation events
-aws cloudformation describe-stack-events \
-  --stack-name my-eks-cluster-eks \
-  --query 'StackEvents[0:10].[Timestamp,ResourceStatus,ResourceStatusReason]' \
-  --output table
-```
-
-### View Stack Status
+### Stack Status
 
 ```bash
 ./deploy.sh status
 ```
 
-### kubectl Not Configured
+---
+
+## Cleanup Features
+
+### Helm Chart Cleanup
+
+During destroy, the script lists all installed Helm releases and prompts for cleanup:
 
 ```bash
-# Update kubeconfig
-aws eks update-kubeconfig --region <region> --name <cluster-name>
+./deploy.sh destroy all
 ```
 
-### Addon Issues
+**Interactive Options:**
+
+- `all` - Uninstall ALL Helm releases (including custom apps)
+- `deploy` - Uninstall only deploy.sh managed releases (aws-load-balancer-controller)
+- `skip` - Skip Helm cleanup (manual cleanup required)
+
+**Example Output:**
+
+```
+==> Found 3 Helm Release(s)
+
+  Installed Helm Releases:
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ NAME                       NAMESPACE       REVISION  UPDATED     │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ aws-load-balancer...   kube-system     1         2025-01-15  │
+  │ ingress-nginx          invinsense      2         2025-01-12  │
+  │ cert-manager           invinsense      1         2025-01-12  │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Uninstall Helm releases? [all/deploy/skip] [skip]:
+```
+
+### EBS Volume Cleanup
+
+After all CloudFormation stacks are deleted, the script finds Kubernetes-created EBS volumes:
+
+**Filters Applied:**
+
+- Tag: `kubernetes.io/cluster/<cluster-name> = owned`
+- Status: `available` (unattached volumes only)
+
+**Example Output:**
+
+```
+==> Cleaning up EBS Volumes
+
+  Found 2 unattached EBS volume(s):
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ VOLUME ID           SIZE (GB)   PVC NAME                         │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ vol-0abc123def456   10GB        pvc-data-mongodb-0              │
+  │ vol-0def789ghi012   20GB        pvc-logs-app                    │
+  └─────────────────────────────────────────────────────────────────┘
+
+  Delete these volumes? [yes/no] [no]:
+```
+
+**Manual EBS Cleanup:**
 
 ```bash
-# Check addon status
-aws eks describe-addon --cluster-name <cluster-name> --addon-name vpc-cni
+# List cluster volumes
+aws ec2 describe-volumes \
+  --filters "Name=tag:kubernetes.io/cluster/<cluster-name>,Values=owned" \
+  --query "Volumes[*].[VolumeId,Size,State]" \
+  --output table
 
-# List all addons
-aws eks list-addons --cluster-name <cluster-name>
+# Delete specific volume
+aws ec2 delete-volume --volume-id vol-xxxxxxxx
 ```
+
+---
+
+## Customization
+
+### Environment Variables
+
+```bash
+# Cluster configuration
+export CLUSTER_NAME=my-eks-cluster
+export AWS_REGION=us-west-2
+
+# VPC configuration (for clients with existing CIDR ranges)
+export VPC_CIDR=10.100.0.0/16           # Default: 10.11.0.0/16
+
+# Node configuration
+export NODE_ARCHITECTURE=arm64           # arm64 or x86_64
+export INSTANCE_TYPE=c7g.2xlarge        # Graviton or Intel
+export NODE_DISK_SIZE=80                # GB
+export NODE_MIN_SIZE=2
+export NODE_MAX_SIZE=4
+export NODE_DESIRED_CAPACITY=2
+
+# NodeGroup AZ distribution
+export NODEGROUP_AZ_MODE=multi          # multi or single
+export TARGET_AZ=us-west-2a             # for single AZ mode
+
+# API Server IP restriction
+export API_IP_RESTRICTION_ENABLED=true
+export API_ALLOWED_CIDRS="1.2.3.4/32,5.6.7.8/32"
+```
+
+### VPC CIDR Configuration
+
+Some clients may have existing network infrastructure that conflicts with the default VPC CIDR (`10.11.0.0/16`). You can customize the VPC CIDR block:
+
+**Common Private CIDR Ranges:**
+
+| CIDR Range | Usable IPs | Use Case |
+|------------|------------|----------|
+| `10.0.0.0/16` | 65,534 | General purpose |
+| `10.11.0.0/16` | 65,534 | Default (as-is deployments) |
+| `10.100.0.0/16` | 65,534 | Avoids conflicts with 10.0.x and 10.11.x |
+| `172.16.0.0/16` | 65,534 | Corporate network avoidance |
+| `172.20.0.0/16` | 65,534 | Corporate network avoidance |
+| `192.168.0.0/16` | 65,534 | Home/office network avoidance |
+
+**Deployment with custom CIDR:**
+
+```bash
+# Via environment variable (non-interactive)
+VPC_CIDR=10.100.0.0/16 ./deploy.sh deploy all
+
+# Or set and run interactively
+export VPC_CIDR=172.20.0.0/16
+./deploy.sh deploy all
+```
+
+**Note:** The VPC CIDR is automatically divided into 6 subnets (3 public, 3 private) using /20 prefixes (4,094 IPs each).
+
+### Addon Resource Configuration
+
+EFS CSI driver pods have resource limits configured:
+
+| Component | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|-----------|-------------|----------|----------------|--------------|
+| Controller | 25m | 100m | 64Mi | 128Mi |
+| Node | 25m | 100m | 64Mi | 128Mi |
+
+To customize, edit `04-addons.yaml` and modify the `ConfigurationValues` property.
+
+---
 
 ## File Structure
 
 ```
 cloudformation/
-├── README.md                 # This file
-├── deploy.sh                 # Deployment script
-├── 01-vpc.yaml              # Stack 1: VPC resources
-├── 02-eks-cluster.yaml      # Stack 2: EKS cluster + non-node addons
-├── 03-nodegroup.yaml        # Stack 3: Managed node group
-└── 04-addons.yaml           # Stack 4: Node-dependent addons
+├── 01-vpc.yaml                      # VPC and networking
+├── 02-eks-cluster.yaml               # EKS cluster + core addons
+├── 03-nodegroup.yaml                 # Managed node group
+├── 04-addons.yaml                   # Node-dependent addons
+├── 05-load-balancer-controller.yaml # Load Balancer Controller
+├── deploy.sh                         # Main deployment script
+├── validate-permissions.sh           # Permission validation script
+├── iam-policies/
+│   ├── eks-deployer-policy-minimal.json  # Required IAM policy
+│   └── eks-deployer-policy-complete.json   # Complete policy reference
+├── RESOURCES.md                       # Complete AWS resources inventory
+└── README.md                         # This file
 ```
 
-## Post-Deployment
+**See [RESOURCES.md](RESOURCES.md)** for a complete list of all AWS resources created by the CloudFormation templates (~62 resources).
 
-### Access the Cluster
+---
+
+## Troubleshooting
+
+### Validation Fails
+
+**Problem:** Missing permissions error
+
+**Solution:**
+
+1. Check which permissions are missing from the validation output
+2. Attach the `eks-deployer-policy-minimal.json` policy to your IAM user
+3. Wait 30-60 seconds for IAM propagation
+4. Re-run validation
+
+### Deployment Fails
+
+**Check CloudFormation events:**
 
 ```bash
-# Configure kubectl (automatically done by deploy script)
-aws eks update-kubeconfig --region <region> --name <cluster-name>
+aws cloudformation describe-stack-events \
+  --stack-name <stack-name> \
+  --region <region> \
+  --query 'sort_by(StackEventTimestamp, DESC)[0:5]'
+```
 
-# Verify access
+**Check EKS cluster status:**
+
+```bash
+aws eks describe-cluster \
+  --name <cluster-name> \
+  --region <region>
+```
+
+### Node Group Issues
+
+**Check node group status:**
+
+```bash
+aws eks describe-nodegroup \
+  --cluster-name <cluster-name> \
+  --nodegroup-name <nodegroup-name> \
+  --region <region>
+```
+
+**Check nodes:**
+
+```bash
 kubectl get nodes
 kubectl get pods -A
 ```
 
-### Deploy Sample Application
+### Addon Issues
+
+**List addons:**
 
 ```bash
-# Create a test deployment
-kubectl create deployment nginx --image=nginx
-
-# Expose it
-kubectl expose deployment nginx --port=80 --type=LoadBalancer
-
-# Check service
-kubectl get svc nginx
+aws eks list-addons --cluster-name <cluster-name> --region <region>
 ```
 
-### Use EBS Storage
-
-The EBS CSI Driver is configured as default StorageClass:
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: my-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  # Uses gp3 by default
-```
-
-## Clean Up
+**Check addon logs:**
 
 ```bash
-# Delete all resources
-./deploy.sh destroy all
-
-# Verify deletion
-./deploy.sh status
+kubectl logs -n kube-system -l app.kubernetes.io/name=<addon-name>
 ```
+
+---
 
 ## Support
 
-For issues or questions:
-1. Check CloudFormation stack events in AWS Console
-2. Run `./deploy.sh status` to see current state
-3. Review CloudWatch logs for Lambda/addon issues
+### Documentation
 
+- [EKS Documentation](https://docs.aws.amazon.com/eks/)
+- [CloudFormation Documentation](https://docs.aws.amazon.com/cloudformation/)
+- [AWS Load Balancer Controller](https://github.com/kubernetes-sigs/aws-load-balancer-controller)
+
+### Useful Commands
+
+```bash
+# Get kubeconfig for cluster
+aws eks update-kubeconfig --region <region> --name <cluster-name>
+
+# List EKS clusters
+aws eks list-clusters --region <region>
+
+# Describe stack
+aws cloudformation describe-stacks --stack-name <stack-name> --region <region>
+
+# Tail CloudFormation events
+aws cloudformation describe-stack-events \
+  --stack-name <stack-name> \
+  --region <region> \
+  --query 'sort_by(StackEventTimestamp, DESC)' \
+  --output text
+```

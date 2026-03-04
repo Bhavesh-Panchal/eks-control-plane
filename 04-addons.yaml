@@ -95,6 +95,34 @@ Resources:
       AddonVersion:
         Fn::ImportValue: !Sub '${ClusterName}-EfsCsiVersion'
       ResolveConflicts: NONE
+      # Resource limits for EFS CSI controller and node pods
+      ConfigurationValues: !Sub |
+        {
+          "controller": {
+            "resources": {
+              "requests": {
+                "cpu": "25m",
+                "memory": "64Mi"
+              },
+              "limits": {
+                "cpu": "100m",
+                "memory": "128Mi"
+              }
+            }
+          },
+          "node": {
+            "resources": {
+              "requests": {
+                "cpu": "25m",
+                "memory": "64Mi"
+              },
+              "limits": {
+                "cpu": "100m",
+                "memory": "128Mi"
+              }
+            }
+          }
+        }
       # Inline Pod Identity Association using shared role from Stack 2
       PodIdentityAssociations:
         - RoleArn:

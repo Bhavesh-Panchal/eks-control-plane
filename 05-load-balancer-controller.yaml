@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Load Balancer Controller IAM Setup - Stack 5 of 5'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: my-eks-cluster
+    Description: Name of the EKS cluster
+
+Resources:
+  #============================================
+  # IAM Policy for AWS Load Balancer Controller
+  #============================================
+  LoadBalancerControllerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ClusterName}-AWSLoadBalancerControllerIAMPolicy'
+      Description: IAM policy for AWS Load Balancer Controller
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource: '*'
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: elasticloadbalancing.amazonaws.com
+          - Effect: Allow
+            Action:
+              - ec2:DescribeAccountAttributes
+              - ec2:DescribeAddresses
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeInternetGateways
+              - ec2:DescribeVpcs
+              - ec2:DescribeVpcPeeringConnections
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeInstances
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeTags
+              - ec2:GetCoipPoolUsage
+              - ec2:DescribeCoipPools
+              - ec2:GetSecurityGroupsForVpc
+              - ec2:DescribeIpamPools
+              - ec2:DescribeRouteTables
+              - elasticloadbalancing:DescribeLoadBalancers
+              - elasticloadbalancing:DescribeLoadBalancerAttributes
+              - elasticloadbalancing:DescribeListeners
+              - elasticloadbalancing:DescribeListenerCertificates
+              - elasticloadbalancing:DescribeListenerAttributes
+              - elasticloadbalancing:DescribeSSLPolicies
+              - elasticloadbalancing:DescribeRules
+              - elasticloadbalancing:DescribeTargetGroups
+              - elasticloadbalancing:DescribeTargetGroupAttributes
+              - elasticloadbalancing:DescribeTargetHealth
+              - elasticloadbalancing:DescribeTags
+              - elasticloadbalancing:DescribeTrustStores
+              - elasticloadbalancing:DescribeCapacityReservation
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - cognito-idp:DescribeUserPoolClient
+              - acm:ListCertificates
+              - acm:DescribeCertificate
+              - iam:ListServerCertificates
+              - iam:GetServerCertificate
+              - waf-regional:GetWebACL
+              - waf-regional:GetWebACLForResource
+              - waf-regional:AssociateWebACL
+              - waf-regional:DisassociateWebACL
+              - wafv2:GetWebACL
+              - wafv2:GetWebACLForResource
+              - wafv2:AssociateWebACL
+              - wafv2:DisassociateWebACL
+              - shield:GetSubscriptionState
+              - shield:DescribeProtection
+              - shield:CreateProtection
+              - shield:DeleteProtection
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:CreateSecurityGroup
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              StringEquals:
+                ec2:CreateAction: CreateSecurityGroup
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:CreateTags
+              - ec2:DeleteTags
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:DeleteSecurityGroup
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateLoadBalancer
+              - elasticloadbalancing:CreateTargetGroup
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:CreateListener
+              - elasticloadbalancing:DeleteListener
+              - elasticloadbalancing:CreateRule
+              - elasticloadbalancing:DeleteRule
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddListenerCertificates
+              - elasticloadbalancing:RemoveListenerCertificates
+              - elasticloadbalancing:ModifyListener
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'true'
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*
+              - arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:ModifyLoadBalancerAttributes
+              - elasticloadbalancing:SetIpAddressType
+              - elasticloadbalancing:SetSecurityGroups
+              - elasticloadbalancing:SetSubnets
+              - elasticloadbalancing:DeleteLoadBalancer
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+              - elasticloadbalancing:DeleteTargetGroup
+              - elasticloadbalancing:ModifyCapacityReservation
+              - elasticloadbalancing:ModifyIpPools
+            Resource: '*'
+            Condition:
+              'Null':
+                aws:ResourceTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:AddTags
+            Resource:
+              - arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*
+              - arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*
+            Condition:
+              StringEquals:
+                elasticloadbalancing:CreateAction:
+                  - CreateTargetGroup
+                  - CreateLoadBalancer
+              'Null':
+                aws:RequestTag/elbv2.k8s.aws/cluster: 'false'
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:RegisterTargets
+              - elasticloadbalancing:DeregisterTargets
+            Resource: arn:aws:elasticloadbalancing:*:*:targetgroup/*/*
+          - Effect: Allow
+            Action:
+              - elasticloadbalancing:SetWebAcl
+              - elasticloadbalancing:ModifyListener
+              - elasticloadbalancing:ModifyListenerAttributes
+              - elasticloadbalancing:AddListenerCertificates
+              - elasticloadbalancing:RemoveListenerCertificates
+              - elasticloadbalancing:ModifyRule
+              - elasticloadbalancing:SetRulePriorities
+            Resource: '*'
+
+  #============================================
+  # IAM Role for AWS Load Balancer Controller (IRSA)
+  #============================================
+  LoadBalancerControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ClusterName}-aws-load-balancer-controller-role'
+      Description: IAM Role for AWS Load Balancer Controller using IRSA
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Federated": "${OidcProviderArn}"
+                  },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${OidcProviderUrl}:aud": "sts.amazonaws.com"
+                    },
+                    "StringLike": {
+                      "${OidcProviderUrl}:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller"
+                    }
+                  }
+                }
+              ]
+            }
+          - OidcProviderArn:
+              Fn::ImportValue: !Sub '${ClusterName}-OidcProviderArn'
+            OidcProviderUrl:
+              Fn::ImportValue: !Sub '${ClusterName}-OidcProviderUrl'
+      ManagedPolicyArns:
+        - !Ref LoadBalancerControllerPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-aws-load-balancer-controller-role'
+
+Outputs:
+  LoadBalancerControllerPolicyArn:
+    Description: ARN of the AWS Load Balancer Controller IAM Policy
+    Value: !Ref LoadBalancerControllerPolicy
+    Export:
+      Name: !Sub '${ClusterName}-LoadBalancerControllerPolicyArn'
+
+  LoadBalancerControllerRoleArn:
+    Description: ARN of the AWS Load Balancer Controller IAM Role
+    Value: !GetAtt LoadBalancerControllerRole.Arn
+    Export:
+      Name: !Sub '${ClusterName}-LoadBalancerControllerRoleArn'
+
+  InstallationInstructions:
+    Description: Commands to install AWS Load Balancer Controller
+    Value: !Sub |
+      # Add the EKS Helm chart repository
+      helm repo add eks https://aws.github.io/eks-charts
+      helm repo update
+      
+      # Install the AWS Load Balancer Controller
+      helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        -n kube-system \
+        --set clusterName=${ClusterName} \
+        --set serviceAccount.create=true \
+        --set serviceAccount.name=aws-load-balancer-controller \
+        --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=${LoadBalancerControllerRole.Arn} \
+        --set region=${AWS::Region} \
+        --set vpcId=$(aws cloudformation describe-stacks --stack-name ${ClusterName}-vpc --query 'Stacks[0].Outputs[?OutputKey==`VpcId`].OutputValue' --output text)
